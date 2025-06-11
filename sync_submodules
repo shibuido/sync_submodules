@@ -199,7 +199,7 @@ function sync_all_submodules() {
     
     # Get list of submodules (handles paths with spaces)
     local submodules
-    submodules=$(git submodule foreach --quiet 'printf "%s\n" "$sm_path"')
+    submodules=$(git submodule foreach --recursive --quiet 'printf "%s\n" "$sm_path"')
     
     if [[ -z "$submodules" ]]; then
         INFO "No submodules found"
@@ -207,16 +207,31 @@ function sync_all_submodules() {
     fi
     
     local failed_repos=()
+    local processed_submodules=()
     
     # Sync each submodule
     while IFS= read -r submodule; do
         if [[ -n "$submodule" ]]; then
+            processed_submodules+=("$submodule")
             echo
             if ! sync_repository "$submodule" "submodule:$submodule"; then
                 failed_repos+=("$submodule")
             fi
         fi
     done <<< "$submodules"
+
+    # Second pass (bottom-up) to commit/push parent submodule pointers
+    for (( idx=${#processed_submodules[@]}-1 ; idx>=0 ; idx-- )); do
+        parent="${processed_submodules[idx]}"
+        # Only relevant if the repo *has* its own submodules
+        if [[ -f "$parent/.gitmodules" ]]; then
+            pushd "$parent" >/dev/null
+            if ! update_superrepo_references; then
+                failed_repos+=("$parent (update refs)")
+            fi
+            popd >/dev/null
+        fi
+    done
     
     if [[ ${#failed_repos[@]} -gt 0 ]]; then
         ERROR "Failed to sync the following submodules:"
