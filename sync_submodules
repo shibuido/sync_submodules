@@ -1,0 +1,314 @@
+#!/bin/bash
+
+# Origin: <https://claude.ai/public/artifacts/b20bdae5-c7cf-4956-954c-999ca3fbb695>
+
+# sync_submodules.sh - Universal Git Submodule Synchronization Script
+# 
+# PURPOSE:
+# This script automates the synchronization of git repositories in a team environment
+# where a "superrepo" contains all team repositories as submodules.
+#
+# WHY THIS SCRIPT EXISTS:
+# - Teams often struggle with keeping multiple repositories in sync
+# - Manual submodule management is error-prone and time-consuming
+# - Conflicts and divergent branches can cause confusion and lost work
+# - This script provides a guided, safe workflow for synchronization
+#
+# WHAT IT DOES:
+# 1. Pulls latest changes from all remotes (superrepo and submodules)
+# 2. Detects conflicts and provides resolution guidance
+# 3. Pushes local changes to remotes
+# 4. Updates superrepo references when submodules change
+# 5. Provides clear feedback about what's happening and why
+#
+# WORKFLOW:
+# 1. Run ./sync_submodules.sh from the superrepo root
+# 2. Follow any prompts for conflict resolution
+# 3. The script will handle the rest automatically
+
+set -euo pipefail
+
+# Logging functions
+function INFO() { echo -e "\033[0;32mINFO: $*\033[0m"; }
+function ERROR() { echo -e "\033[0;31mERROR: $*\033[0m" >&2; }
+function WARN() { echo -e "\033[0;33mWARN: $*\033[0m"; }
+
+# Helper function to check if there are uncommitted changes
+function has_uncommitted_changes() {
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        return 0
+    fi
+    return 1
+}
+
+# Helper function to check if local branch is ahead of remote
+function is_ahead_of_remote() {
+    local ahead=$(git rev-list --count @{u}..HEAD 2>/dev/null || echo "0")
+    [[ "$ahead" -gt 0 ]]
+}
+
+# Helper function to check if local branch is behind remote
+function is_behind_remote() {
+    local behind=$(git rev-list --count HEAD..@{u} 2>/dev/null || echo "0")
+    [[ "$behind" -gt 0 ]]
+}
+
+# Helper function to get current branch name
+function current_branch() {
+    git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"
+}
+
+# Helper function to check if a ref exists
+function ref_exists() {
+    git rev-parse --verify "$1" >/dev/null 2>&1
+}
+
+# Main synchronization function
+function sync_repository() {
+    local repo_path="${1:-.}"
+    local repo_name="${2:-superrepo}"
+    
+    INFO "Processing $repo_name at $repo_path"
+    
+    cd "$repo_path"
+    
+    # Check if it's a git repository
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        ERROR "$repo_path is not a git repository!"
+        return 1
+    fi
+    
+    local branch=$(current_branch)
+    INFO "Current branch: $branch"
+    
+    # Check for uncommitted changes
+    if has_uncommitted_changes; then
+        ERROR "Uncommitted changes detected in $repo_name!"
+        WARN "Please commit or stash your changes before syncing:"
+        git status --short
+        return 1
+    fi
+    
+    # Fetch latest changes
+    INFO "Fetching latest changes from remote..."
+    if ! git fetch --all --prune; then
+        ERROR "Failed to fetch from remote in $repo_name"
+        return 1
+    fi
+    
+    # Check if we have a tracking branch
+    if ! git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
+        WARN "No upstream branch set for $branch in $repo_name"
+        WARN "You may want to set it with: git branch --set-upstream-to=origin/$branch"
+        return 0
+    fi
+    
+    # Check sync status
+    local needs_pull=false
+    local needs_push=false
+    
+    if is_behind_remote; then
+        needs_pull=true
+        INFO "$repo_name is behind remote"
+    fi
+    
+    if is_ahead_of_remote; then
+        needs_push=true
+        INFO "$repo_name is ahead of remote"
+    fi
+    
+    # Handle pulling changes
+    if [[ "$needs_pull" == "true" ]]; then
+        if [[ "$needs_push" == "true" ]]; then
+            # We have diverged - need user intervention
+            ERROR "$repo_name has diverged from remote!"
+            WARN "Your branch and remote have different commits."
+            WARN "Options:"
+            WARN "  1. Merge: git pull --no-rebase"
+            WARN "  2. Rebase: git pull --rebase"
+            WARN "  3. Force push (DANGEROUS): git push --force-with-lease"
+            WARN "Recommended: Use rebase if your commits are not shared yet"
+            return 1
+        else
+            # Just behind - safe to pull
+            INFO "Pulling changes from remote..."
+            if ! git pull --ff-only; then
+                ERROR "Fast-forward pull failed in $repo_name"
+                WARN "This might indicate a complex merge situation"
+                WARN "Try: git pull --no-ff or git pull --rebase"
+                return 1
+            fi
+            INFO "Successfully pulled changes"
+        fi
+    fi
+    
+    # Handle pushing changes
+    if [[ "$needs_push" == "true" ]] && [[ "$needs_pull" == "false" ]]; then
+        INFO "Pushing local changes to remote..."
+        if ! git push; then
+            ERROR "Failed to push changes in $repo_name"
+            WARN "Possible reasons:"
+            WARN "  - No push permissions"
+            WARN "  - Remote has protected branch rules"
+            WARN "  - Network issues"
+            return 1
+        fi
+        INFO "Successfully pushed changes"
+    fi
+    
+    return 0
+}
+
+# Function to sync all submodules
+function sync_all_submodules() {
+    INFO "Starting submodule synchronization..."
+    
+    # Initialize and update submodules
+    INFO "Initializing and updating submodules..."
+    git submodule update --init --recursive
+    
+    # Get list of submodules
+    local submodules=$(git submodule status --recursive | awk '{print $2}')
+    
+    if [[ -z "$submodules" ]]; then
+        INFO "No submodules found"
+        return 0
+    fi
+    
+    local failed_repos=()
+    
+    # Sync each submodule
+    while IFS= read -r submodule; do
+        if [[ -n "$submodule" ]]; then
+            echo
+            if ! sync_repository "$submodule" "submodule:$submodule"; then
+                failed_repos+=("$submodule")
+            fi
+        fi
+    done <<< "$submodules"
+    
+    if [[ ${#failed_repos[@]} -gt 0 ]]; then
+        ERROR "Failed to sync the following submodules:"
+        for repo in "${failed_repos[@]}"; do
+            ERROR "  - $repo"
+        done
+        return 1
+    fi
+    
+    INFO "All submodules synced successfully"
+    return 0
+}
+
+# Function to update superrepo references
+function update_superrepo_references() {
+    INFO "Checking if superrepo references need updating..."
+    
+    local changes_detected=false
+    
+    # Check each submodule for changes
+    while IFS= read -r line; do
+        if [[ -n "$line" ]]; then
+            local status="${line:0:1}"
+            local submodule="${line:1}"
+            submodule="${submodule%% *}"  # Remove everything after first space
+            
+            if [[ "$status" == "+" ]]; then
+                INFO "Submodule $submodule has new commits"
+                changes_detected=true
+                git add "$submodule"
+            elif [[ "$status" == "-" ]]; then
+                WARN "Submodule $submodule is behind its index"
+                changes_detected=true
+            elif [[ "$status" == "U" ]]; then
+                ERROR "Submodule $submodule has merge conflicts!"
+                return 1
+            fi
+        fi
+    done < <(git submodule status --recursive)
+    
+    if [[ "$changes_detected" == "true" ]]; then
+        INFO "Submodule references have changed"
+        
+        # Check if we have staged changes
+        if git diff --cached --quiet; then
+            INFO "No submodule updates to commit"
+            return 0
+        fi
+        
+        # Create commit message
+        local commit_msg="Update submodule references
+
+Updated submodules:
+$(git diff --cached --name-only | grep -E '^[^/]+$' | sed 's/^/- /')"
+        
+        INFO "Creating commit for submodule updates..."
+        git commit -m "$commit_msg"
+        
+        INFO "Pushing superrepo changes..."
+        if ! git push; then
+            ERROR "Failed to push superrepo changes"
+            WARN "You may need to pull first or resolve conflicts"
+            return 1
+        fi
+        
+        INFO "Successfully updated superrepo references"
+    else
+        INFO "No submodule reference updates needed"
+    fi
+    
+    return 0
+}
+
+# Main execution
+function main() {
+    INFO "=== Git Submodule Sync Script ==="
+    INFO "This script will sync your superrepo and all submodules"
+    echo
+    
+    # Check if we're in a git repository
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        ERROR "Not in a git repository!"
+        ERROR "Please run this script from your superrepo root"
+        exit 1
+    fi
+    
+    # Get repository root
+    local repo_root=$(git rev-parse --show-toplevel)
+    cd "$repo_root"
+    
+    INFO "Working in repository: $repo_root"
+    echo
+    
+    # Step 1: Sync the superrepo
+    INFO "=== Step 1: Syncing superrepo ==="
+    if ! sync_repository "." "superrepo"; then
+        ERROR "Failed to sync superrepo"
+        ERROR "Please resolve the issues above and run the script again"
+        exit 1
+    fi
+    echo
+    
+    # Step 2: Sync all submodules
+    INFO "=== Step 2: Syncing submodules ==="
+    if ! sync_all_submodules; then
+        ERROR "Failed to sync all submodules"
+        ERROR "Please resolve the issues in the affected submodules and run again"
+        exit 1
+    fi
+    echo
+    
+    # Step 3: Update superrepo references if needed
+    INFO "=== Step 3: Updating superrepo references ==="
+    if ! update_superrepo_references; then
+        ERROR "Failed to update superrepo references"
+        exit 1
+    fi
+    echo
+    
+    INFO "=== Synchronization complete! ==="
+    INFO "All repositories are now in sync with their remotes"
+    INFO "Your teammates will receive your changes on their next sync"
+}
+
+# Run main function
+main "$@"
