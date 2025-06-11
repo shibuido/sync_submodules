@@ -35,7 +35,11 @@ function WARN() { echo -e "\033[0;33mWARN: $*\033[0m"; }
 
 # Helper function to check if there are uncommitted changes
 function has_uncommitted_changes() {
-    if ! git diff --quiet || ! git diff --cached --quiet; then
+    # Detect unstaged, staged, untracked files and submodule modifications
+    if ! git diff --quiet --submodule || ! git diff --cached --quiet --submodule; then
+        return 0
+    fi
+    if [[ -n $(git ls-files --others --exclude-standard) ]]; then
         return 0
     fi
     return 1
@@ -63,6 +67,12 @@ function ref_exists() {
     git rev-parse --verify "$1" >/dev/null 2>&1
 }
 
+# Determine repo default branch (origin/HEAD) or fall back to main
+function default_branch() {
+    git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | \
+        sed 's@^refs/remotes/origin/@@' || echo "main"
+}
+
 # Main synchronization function
 function sync_repository() {
     local repo_path="${1:-.}"
@@ -80,6 +90,18 @@ function sync_repository() {
     
     local branch=$(current_branch)
     INFO "Current branch: $branch"
+
+    # Handle detached-HEAD (typical after `git submodule update`)
+    if [[ "$branch" == "HEAD" ]]; then
+        local def_branch
+        def_branch=$(default_branch)
+        INFO "Detached HEAD detected – switching to $def_branch"
+        if ! git switch "$def_branch" >/dev/null 2>&1; then
+            WARN "Could not switch to $def_branch. Skipping sync for $repo_name."
+            return 0
+        fi
+        branch="$def_branch"
+    fi
     
     # Check for uncommitted changes
     if has_uncommitted_changes; then
@@ -167,8 +189,9 @@ function sync_all_submodules() {
     INFO "Initializing and updating submodules..."
     git submodule update --init --recursive
     
-    # Get list of submodules
-    local submodules=$(git submodule status --recursive | awk '{print $2}')
+    # Get list of submodules (handles paths with spaces)
+    local submodules
+    submodules=$(git submodule foreach --quiet 'printf "%s\n" "$sm_path"')
     
     if [[ -z "$submodules" ]]; then
         INFO "No submodules found"
@@ -235,11 +258,11 @@ function update_superrepo_references() {
             return 0
         fi
         
-        # Create commit message
+        # Create commit message (include nested submodules)
         local commit_msg="Update submodule references
 
 Updated submodules:
-$(git diff --cached --name-only | grep -E '^[^/]+$' | sed 's/^/- /')"
+$(git diff --cached --name-only | sed 's/^/- /')"
         
         INFO "Creating commit for submodule updates..."
         git commit -m "$commit_msg"
