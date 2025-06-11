@@ -28,10 +28,18 @@
 
 set -euo pipefail
 
-# Logging functions
-function INFO() { echo -e "\033[0;32mINFO: $*\033[0m"; }
-function ERROR() { echo -e "\033[0;31mERROR: $*\033[0m" >&2; }
-function WARN() { echo -e "\033[0;33mWARN: $*\033[0m"; }
+# Logging functions (respect non-TTY environments)
+function _color() {
+    local code="$1"; shift
+    if [[ -t 1 ]]; then
+        echo -e "\033[${code}m$*\033[0m"
+    else
+        echo "$*"
+    fi
+}
+function INFO()  { _color "0;32" "INFO: $*"; }
+function WARN()  { _color "0;33" "WARN: $*"; }
+function ERROR() { _color "0;31" "ERROR: $*" >&2; }
 
 # Helper function to check if there are uncommitted changes
 function has_uncommitted_changes() {
