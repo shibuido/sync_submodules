@@ -88,11 +88,12 @@ function sync_repository() {
     
     INFO "Processing $repo_name at $repo_path"
     
-    cd "$repo_path"
+    pushd "$repo_path" >/dev/null || return 1
     
     # Check if it's a git repository
     if ! git rev-parse --git-dir >/dev/null 2>&1; then
         ERROR "$repo_path is not a git repository!"
+        popd >/dev/null
         return 1
     fi
     
@@ -106,6 +107,7 @@ function sync_repository() {
         INFO "Detached HEAD detected – switching to $def_branch"
         if ! git switch "$def_branch" >/dev/null 2>&1; then
             WARN "Could not switch to $def_branch. Skipping sync for $repo_name."
+            popd >/dev/null
             return 0
         fi
         branch="$def_branch"
@@ -116,6 +118,7 @@ function sync_repository() {
         ERROR "Uncommitted changes detected in $repo_name!"
         WARN "Please commit or stash your changes before syncing:"
         git status --short
+        popd >/dev/null
         return 1
     fi
     
@@ -123,6 +126,7 @@ function sync_repository() {
     INFO "Fetching latest changes from remote..."
     if ! git fetch --all --prune; then
         ERROR "Failed to fetch from remote in $repo_name"
+        popd >/dev/null
         return 1
     fi
     
@@ -130,6 +134,7 @@ function sync_repository() {
     if ! git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
         WARN "No upstream branch set for $branch in $repo_name"
         WARN "You may want to set it with: git branch --set-upstream-to=origin/$branch"
+        popd >/dev/null
         return 0
     fi
     
@@ -158,6 +163,7 @@ function sync_repository() {
             WARN "  2. Rebase: git pull --rebase"
             WARN "  3. Force push (DANGEROUS): git push --force-with-lease"
             WARN "Recommended: Use rebase if your commits are not shared yet"
+            popd >/dev/null
             return 1
         else
             # Just behind - safe to pull
@@ -166,6 +172,7 @@ function sync_repository() {
                 ERROR "Fast-forward pull failed in $repo_name"
                 WARN "This might indicate a complex merge situation"
                 WARN "Try: git pull --no-ff or git pull --rebase"
+                popd >/dev/null
                 return 1
             fi
             INFO "Successfully pulled changes"
@@ -181,11 +188,13 @@ function sync_repository() {
             WARN "  - No push permissions"
             WARN "  - Remote has protected branch rules"
             WARN "  - Network issues"
+            popd >/dev/null
             return 1
         fi
         INFO "Successfully pushed changes"
     fi
     
+    popd >/dev/null
     return 0
 }
 
