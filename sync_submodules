@@ -126,23 +126,41 @@ function sync_repository() {
         ERROR "Uncommitted changes detected in $repo_name!"
         WARN  "Please commit or stash your changes before syncing:"
 
-        # Super-repo: only submodule-pointer updates → offer automatic handling
-        if [[ "$repo_name" == "superrepo" ]] && \
-           git submodule status --recursive 2>/dev/null | grep -qE '^\+' && \
-           git diff --name-only | grep -vE '^[[:space:]]*$' | \
-           while read f; do grep -Fxq "$f" <(git submodule --quiet foreach --recursive 'printf "%s\n" "$sm_path"'); done
-        then
-            INFO "Superrepo contains only submodule reference updates."
-            if update_superrepo_references; then
-                INFO "Submodule references committed & pushed automatically."
-                popd >/dev/null
-                return 0
-            else
-                ERROR "Automatic submodule-reference update failed."
-                popd >/dev/null
-                return 1
+        # --- NEW simple test: are *all* modified paths submodules? ---
+        if [[ "$repo_name" == "superrepo" ]]; then
+            # 1. list every path that shows up in the diff (ignore blank lines)
+            modified_files=$(git diff --name-only | sed '/^[[:space:]]*$/d')
+
+            if [[ -n "$modified_files" ]]; then
+                # 2. collect every submodule path declared in .gitmodules
+                mapfile -t submodule_paths < \
+                    <(git config --file .gitmodules --get-regexp path | awk '{print $2}')
+
+                all_are_submodules=true
+                while IFS= read -r file; do
+                    # does this file exactly match one declared submodule path?
+                    if ! printf '%s\n' "${submodule_paths[@]}" | grep -Fxq "$file"; then
+                        all_are_submodules=false
+                        break
+                    fi
+                done <<< "$modified_files"
+
+                # 3. if *every* modified file is a submodule path, offer automation
+                if $all_are_submodules; then
+                    INFO "Superrepo contains only submodule reference updates."
+                    if update_superrepo_references; then
+                        INFO "Submodule references committed & pushed automatically."
+                        popd >/dev/null
+                        return 0
+                    else
+                        ERROR "Automatic submodule-reference update failed."
+                        popd >/dev/null
+                        return 1
+                    fi
+                fi
             fi
         fi
+        # --- end of new test ---
 
         # Capture and show the status so we can inspect it
         local status_output
