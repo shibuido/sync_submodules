@@ -126,12 +126,43 @@ function sync_repository() {
 
         # Extra help when the uncommitted changes are *only* submodule-pointer updates.
         # `git submodule status` prefixes such submodules with “+”.
+        # Get the absolute path for clear instructions
+        local abs_path=$(pwd)
+        
         if git submodule status --recursive 2>/dev/null | grep -qE '^\+'; then
             WARN "It looks like one or more *submodules* have new commits."
             WARN "To update the parent repository to those commits:"
-            WARN "  1) git add <submodule_path>"
-            WARN "  2) git commit -m 'chore: Update <submodule_path> submodule'"
-            WARN "After committing, re-run ./sync_submodules.sh."
+            WARN ""
+            # Show specific submodules that need updating
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^\+[[:space:]]*[^[:space:]]+[[:space:]]+([^[:space:]]+) ]]; then
+                    local submodule_path="${BASH_REMATCH[1]}"
+                    WARN "  For submodule: $submodule_path"
+                    WARN "    git add $submodule_path"
+                fi
+            done < <(git submodule status --recursive | grep -E '^\+')
+            WARN ""
+            WARN "  Then commit all submodule updates:"
+            WARN "    git commit -m 'chore: Update submodule references'"
+            WARN "    git push"
+            WARN ""
+            WARN "  After that, re-run:"
+            WARN "    ./sync_submodules"
+        else
+            # Regular uncommitted changes in current repo
+            WARN "To commit these changes, run these commands:"
+            WARN ""
+            WARN "  cd $abs_path"
+            WARN "  git add .    # This adds all changes. Use 'git add <file>' for specific files"
+            WARN "  git commit -m 'Your descriptive commit message here'"
+            WARN "  git push"
+            WARN "  cd $(git rev-parse --show-toplevel)    # Return to superrepo root"
+            WARN "  ./sync_submodules    # Re-run this sync script"
+            WARN ""
+            WARN "Or if you want to temporarily save these changes:"
+            WARN "  git stash    # Saves changes temporarily"
+            WARN "  # Then after sync completes:"
+            WARN "  git stash pop    # Restores your changes"
         fi
 
         popd >/dev/null
@@ -148,8 +179,20 @@ function sync_repository() {
     
     # Check if we have a tracking branch
     if ! git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
+        local abs_path=$(pwd)
         WARN "No upstream branch set for $branch in $repo_name"
-        WARN "You may want to set it with: git branch --set-upstream-to=origin/$branch"
+        WARN ""
+        WARN "To set up tracking and push your branch:"
+        WARN "  cd $abs_path"
+        WARN "  git push -u origin $branch    # Pushes and sets up tracking"
+        WARN ""
+        WARN "Or if the branch already exists on remote:"
+        WARN "  cd $abs_path"
+        WARN "  git branch --set-upstream-to=origin/$branch $branch"
+        WARN ""
+        WARN "After setting up tracking, return to superrepo and re-run:"
+        WARN "  cd $(git rev-parse --show-toplevel)"
+        WARN "  ./sync_submodules"
         popd >/dev/null
         return 0
     fi
@@ -172,22 +215,50 @@ function sync_repository() {
     if [[ "$needs_pull" == "true" ]]; then
         if [[ "$needs_push" == "true" ]]; then
             # We have diverged - need user intervention
+            local abs_path=$(pwd)
             ERROR "$repo_name has diverged from remote!"
             WARN "Your branch and remote have different commits."
-            WARN "Options:"
-            WARN "  1. Merge: git pull --no-rebase"
-            WARN "  2. Rebase: git pull --rebase"
-            WARN "  3. Force push (DANGEROUS): git push --force-with-lease"
-            WARN "Recommended: Use rebase if your commits are not shared yet"
+            WARN ""
+            WARN "To resolve, run ONE of these options from the repository:"
+            WARN ""
+            WARN "Option 1 - Merge (creates a merge commit):"
+            WARN "  cd $abs_path"
+            WARN "  git pull --no-rebase"
+            WARN "  # Resolve any conflicts if they occur"
+            WARN "  git push"
+            WARN ""
+            WARN "Option 2 - Rebase (cleaner history, recommended for unpushed commits):"
+            WARN "  cd $abs_path"
+            WARN "  git pull --rebase"
+            WARN "  # Resolve any conflicts if they occur"
+            WARN "  git push"
+            WARN ""
+            WARN "Option 3 - Force push (DANGEROUS - only if you're sure):"
+            WARN "  cd $abs_path"
+            WARN "  git push --force-with-lease"
+            WARN ""
+            WARN "After resolving, return to superrepo and re-run:"
+            WARN "  cd $(git rev-parse --show-toplevel)"
+            WARN "  ./sync_submodules"
             popd >/dev/null
             return 1
         else
             # Just behind - safe to pull
             INFO "Pulling changes from remote..."
             if ! git pull --ff-only; then
+                local abs_path=$(pwd)
                 ERROR "Fast-forward pull failed in $repo_name"
                 WARN "This might indicate a complex merge situation"
-                WARN "Try: git pull --no-ff or git pull --rebase"
+                WARN ""
+                WARN "To resolve, try one of these commands:"
+                WARN "  cd $abs_path"
+                WARN "  git pull --no-ff    # Creates a merge commit"
+                WARN "  # OR"
+                WARN "  git pull --rebase   # Rebases your changes on top"
+                WARN ""
+                WARN "After resolving, return to superrepo and re-run:"
+                WARN "  cd $(git rev-parse --show-toplevel)"
+                WARN "  ./sync_submodules"
                 popd >/dev/null
                 return 1
             fi
@@ -199,11 +270,25 @@ function sync_repository() {
     if [[ "$needs_push" == "true" ]] && [[ "$needs_pull" == "false" ]]; then
         INFO "Pushing local changes to remote..."
         if ! git push; then
+            local abs_path=$(pwd)
             ERROR "Failed to push changes in $repo_name"
             WARN "Possible reasons:"
             WARN "  - No push permissions"
             WARN "  - Remote has protected branch rules"
             WARN "  - Network issues"
+            WARN "  - Remote has newer changes (try pulling first)"
+            WARN ""
+            WARN "To troubleshoot:"
+            WARN "  cd $abs_path"
+            WARN "  git remote -v           # Check remote URLs"
+            WARN "  git fetch --all         # Fetch latest changes"
+            WARN "  git status              # Check current state"
+            WARN "  git pull --rebase       # If remote has newer changes"
+            WARN "  git push                # Try pushing again"
+            WARN ""
+            WARN "After resolving, return to superrepo and re-run:"
+            WARN "  cd $(git rev-parse --show-toplevel)"
+            WARN "  ./sync_submodules"
             popd >/dev/null
             return 1
         fi
@@ -275,6 +360,7 @@ function update_superrepo_references() {
     INFO "Checking if superrepo references need updating..."
     
     local changes_detected=false
+    local submodules_to_update=()
     
     # Check each submodule for changes
     while IFS= read -r line; do
@@ -286,6 +372,7 @@ function update_superrepo_references() {
             if [[ "$status" == "+" ]]; then
                 INFO "Submodule $submodule has new commits"
                 changes_detected=true
+                submodules_to_update+=("$submodule")
                 git add "$submodule"
             elif [[ "$status" == "-" ]]; then
                 WARN "Submodule $submodule is behind its index"
@@ -306,23 +393,61 @@ function update_superrepo_references() {
             return 0
         fi
         
-        # Create commit message (include nested submodules)
-        local commit_msg="Update submodule references
+        # Check if there are only submodule updates (no other changes)
+        local other_changes=$(git diff --name-only | grep -v -E "^(${submodules_to_update[@]// /|})$" || true)
+        
+        if [[ -z "$other_changes" ]]; then
+            # Only submodule updates detected
+            INFO ""
+            INFO "Only submodule updates detected. Would you like to automatically:"
+            INFO "  1. Add all submodule changes"
+            INFO "  2. Create a commit with message: 'chore: Update submodule references'"
+            INFO "  3. Push with --recurse-submodules=on-demand"
+            INFO ""
+            read -p "Proceed with automatic commit and push? [Y/n] " -n 1 -r
+            echo
+            
+            if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
+                # Create commit message listing all updated submodules
+                local commit_msg="chore: Update submodule references
 
 Updated submodules:
 $(git diff --cached --name-only | sed 's/^/- /')"
-        
-        INFO "Creating commit for submodule updates..."
-        git commit -m "$commit_msg"
-        
-        INFO "Pushing superrepo changes..."
-        if ! git push; then
-            ERROR "Failed to push superrepo changes"
-            WARN "You may need to pull first or resolve conflicts"
-            return 1
+                
+                INFO "Creating commit for submodule updates..."
+                if git commit -m "$commit_msg"; then
+                    INFO "Commit created successfully"
+                    
+                    INFO "Pushing with --recurse-submodules=on-demand..."
+                    if git push --recurse-submodules=on-demand; then
+                        INFO "Successfully pushed superrepo and submodule changes"
+                    else
+                        ERROR "Failed to push changes"
+                        WARN "You may need to:"
+                        WARN "  git pull --rebase"
+                        WARN "  git push --recurse-submodules=on-demand"
+                        return 1
+                    fi
+                else
+                    ERROR "Failed to create commit"
+                    return 1
+                fi
+            else
+                INFO "Skipping automatic commit"
+                WARN "To manually commit these changes:"
+                WARN "  git commit -m 'chore: Update submodule references'"
+                WARN "  git push --recurse-submodules=on-demand"
+            fi
+        else
+            # Mixed changes detected
+            WARN "Detected both submodule updates and other file changes"
+            WARN "Please commit manually to ensure proper commit message"
+            WARN ""
+            WARN "Suggested commands:"
+            WARN "  git add ."
+            WARN "  git commit -m 'Your descriptive message here'"
+            WARN "  git push --recurse-submodules=on-demand"
         fi
-        
-        INFO "Successfully updated superrepo references"
     else
         INFO "No submodule reference updates needed"
     fi
