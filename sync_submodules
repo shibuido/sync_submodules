@@ -89,6 +89,14 @@ function sync_repository() {
     INFO "Processing $repo_name at $repo_path"
     
     pushd "$repo_path" >/dev/null || return 1
+
+    # Absolute paths that we can re-use in every hint below
+    local abs_path
+    abs_path=$(pwd)                                           # this repo’s root  (always absolute)
+    # If we are inside a submodule this returns the super-repo’s working tree,
+    # otherwise it is empty.
+    local superproject_root
+    superproject_root=$(git rev-parse --show-superproject-working-tree 2>/dev/null || true)
     
     # Check if it's a git repository
     if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -113,6 +121,24 @@ function sync_repository() {
         branch="$def_branch"
     fi
     
+    # Super-repo: only submodule-pointer updates → offer automatic handling
+    if [[ "$repo_name" == "superrepo" ]] && \
+       git submodule status --recursive 2>/dev/null | grep -qE '^\+' && \
+       git diff --name-only | grep -vE '^[[:space:]]*$' | \
+       while read f; do grep -Fxq "$f" <(git submodule --quiet foreach --recursive 'printf "%s\n" "$sm_path"'); done
+    then
+        INFO "Superrepo contains only submodule reference updates."
+        if update_superrepo_references; then
+            INFO "Submodule references committed & pushed automatically."
+            popd >/dev/null
+            return 0
+        else
+            ERROR "Automatic submodule-reference update failed."
+            popd >/dev/null
+            return 1
+        fi
+    fi
+
     # Check for uncommitted changes
     if has_uncommitted_changes; then
         ERROR "Uncommitted changes detected in $repo_name!"
@@ -127,7 +153,6 @@ function sync_repository() {
         # Extra help when the uncommitted changes are *only* submodule-pointer updates.
         # `git submodule status` prefixes such submodules with “+”.
         # Get the absolute path for clear instructions
-        local abs_path=$(pwd)
         
         if git submodule status --recursive 2>/dev/null | grep -qE '^\+'; then
             WARN "It looks like one or more *submodules* have new commits."
@@ -153,11 +178,13 @@ function sync_repository() {
             WARN "To commit these changes, run these commands:"
             WARN ""
             WARN "  cd $abs_path"
-            WARN "  git add .    # This adds all changes. Use 'git add <file>' for specific files"
+            WARN "  git add .                # add ALL changes (or pick files manually)"
             WARN "  git commit -m 'Your descriptive commit message here'"
             WARN "  git push"
-            WARN "  cd $(git rev-parse --show-toplevel)    # Return to superrepo root"
-            WARN "  ./sync_submodules    # Re-run this sync script"
+            if [[ -n "$superproject_root" ]]; then
+                WARN "  cd $superproject_root   # back to the super-repo"
+            fi
+            WARN "  ./sync_submodules         # rerun the sync script"
             WARN ""
             WARN "Or if you want to temporarily save these changes:"
             WARN "  git stash    # Saves changes temporarily"
@@ -179,7 +206,6 @@ function sync_repository() {
     
     # Check if we have a tracking branch
     if ! git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
-        local abs_path=$(pwd)
         WARN "No upstream branch set for $branch in $repo_name"
         WARN ""
         WARN "To set up tracking and push your branch:"
@@ -238,7 +264,9 @@ function sync_repository() {
             WARN "  git push --force-with-lease"
             WARN ""
             WARN "After resolving, return to superrepo and re-run:"
-            WARN "  cd $(git rev-parse --show-toplevel)"
+            if [[ -n "$superproject_root" ]]; then
+                WARN "  cd $superproject_root    # Return to superrepo root"
+            fi
             WARN "  ./sync_submodules"
             popd >/dev/null
             return 1
