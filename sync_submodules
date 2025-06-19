@@ -124,14 +124,13 @@ function sync_repository() {
         echo "$status_output"
         echo
 
-        # Extra help when the only difference is a submodule pointer
-        # Example line:  " M libs/foo (new commits)"
-        if echo "$status_output" | grep -qE '\(new commits\)'; then
+        # Extra help when the uncommitted changes are *only* submodule-pointer updates.
+        # `git submodule status` prefixes such submodules with “+”.
+        if git submodule status --recursive 2>/dev/null | grep -qE '^\+'; then
             WARN "It looks like one or more *submodules* have new commits."
             WARN "To update the parent repository to those commits:"
-            WARN "  1) cd to the parent repository root"
-            WARN "  2) git add <submodule_path>"
-            WARN "  3) git commit -m 'chore: Update <submodule_path> submodule'"
+            WARN "  1) git add <submodule_path>"
+            WARN "  2) git commit -m 'chore: Update <submodule_path> submodule'"
             WARN "After committing, re-run ./sync_submodules.sh."
         fi
 
