@@ -116,8 +116,25 @@ function sync_repository() {
     # Check for uncommitted changes
     if has_uncommitted_changes; then
         ERROR "Uncommitted changes detected in $repo_name!"
-        WARN "Please commit or stash your changes before syncing:"
-        git status --short
+        WARN  "Please commit or stash your changes before syncing:"
+
+        # Capture and show the status so we can inspect it
+        local status_output
+        status_output=$(git status --short --untracked-files=normal)
+        echo "$status_output"
+        echo
+
+        # Extra help when the only difference is a submodule pointer
+        # Example line:  " M libs/foo (new commits)"
+        if echo "$status_output" | grep -qE '\(new commits\)'; then
+            WARN "It looks like one or more *submodules* have new commits."
+            WARN "To update the parent repository to those commits:"
+            WARN "  1) cd to the parent repository root"
+            WARN "  2) git add <submodule_path>"
+            WARN "  3) git commit -m 'chore: Update <submodule_path> submodule'"
+            WARN "After committing, re-run ./sync_submodules.sh."
+        fi
+
         popd >/dev/null
         return 1
     fi
