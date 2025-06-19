@@ -406,8 +406,12 @@ function update_superrepo_references() {
     while IFS= read -r line; do
         if [[ -n "$line" ]]; then
             local status="${line:0:1}"
-            local submodule="${line:1}"
-            submodule="${submodule%% *}"  # Remove everything after first space
+
+            # Strip the status flag and split the remainder:
+            #   "<hash> <path> (<branch>)"
+            local _rest="${line:1}"
+            local _hash submodule _discard
+            read -r _hash submodule _discard <<< "$_rest"   # submodule now holds the path
             
             if [[ "$status" == "+" ]]; then
                 INFO "Submodule $submodule has new commits"
