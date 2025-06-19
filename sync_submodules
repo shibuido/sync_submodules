@@ -121,28 +121,28 @@ function sync_repository() {
         branch="$def_branch"
     fi
     
-    # Super-repo: only submodule-pointer updates → offer automatic handling
-    if [[ "$repo_name" == "superrepo" ]] && \
-       git submodule status --recursive 2>/dev/null | grep -qE '^\+' && \
-       git diff --name-only | grep -vE '^[[:space:]]*$' | \
-       while read f; do grep -Fxq "$f" <(git submodule --quiet foreach --recursive 'printf "%s\n" "$sm_path"'); done
-    then
-        INFO "Superrepo contains only submodule reference updates."
-        if update_superrepo_references; then
-            INFO "Submodule references committed & pushed automatically."
-            popd >/dev/null
-            return 0
-        else
-            ERROR "Automatic submodule-reference update failed."
-            popd >/dev/null
-            return 1
-        fi
-    fi
-
     # Check for uncommitted changes
     if has_uncommitted_changes; then
         ERROR "Uncommitted changes detected in $repo_name!"
         WARN  "Please commit or stash your changes before syncing:"
+
+        # Super-repo: only submodule-pointer updates → offer automatic handling
+        if [[ "$repo_name" == "superrepo" ]] && \
+           git submodule status --recursive 2>/dev/null | grep -qE '^\+' && \
+           git diff --name-only | grep -vE '^[[:space:]]*$' | \
+           while read f; do grep -Fxq "$f" <(git submodule --quiet foreach --recursive 'printf "%s\n" "$sm_path"'); done
+        then
+            INFO "Superrepo contains only submodule reference updates."
+            if update_superrepo_references; then
+                INFO "Submodule references committed & pushed automatically."
+                popd >/dev/null
+                return 0
+            else
+                ERROR "Automatic submodule-reference update failed."
+                popd >/dev/null
+                return 1
+            fi
+        fi
 
         # Capture and show the status so we can inspect it
         local status_output
