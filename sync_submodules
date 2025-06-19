@@ -159,20 +159,14 @@ function sync_repository() {
             WARN "To update the parent repository to those commits:"
             WARN ""
             # Show specific submodules that need updating
-            while IFS= read -r line; do
-                if [[ "$line" =~ ^\+[[:space:]]*[^[:space:]]+[[:space:]]+([^[:space:]]+) ]]; then
-                    local submodule_path="${BASH_REMATCH[1]}"
-                    WARN "  For submodule: $submodule_path"
-                    WARN "    git add $submodule_path"
-                fi
-            done < <(git submodule status --recursive | grep -E '^\+')
-            WARN ""
-            WARN "  Then commit all submodule updates:"
-            WARN "    git commit -m 'chore: Update submodule references'"
-            WARN "    git push"
-            WARN ""
-            WARN "  After that, re-run:"
-            WARN "    ./sync_submodules"
+            WARN "  cd $abs_path"
+            WARN "  git add .                # add ALL changes (or pick files manually)"
+            WARN "  git commit -m 'Your descriptive commit message here'"
+            WARN "  git push"
+            if [[ -n "$superproject_root" ]]; then
+                WARN "  cd $superproject_root   # back to the super-repo"
+            fi
+            WARN "  ./sync_submodules         # rerun the sync script"
         else
             # Regular uncommitted changes in current repo
             WARN "To commit these changes, run these commands:"
