@@ -202,6 +202,8 @@ function sync_repository() {
             WARN "  git stash    # Saves changes temporarily"
             WARN "  # Then after sync completes:"
             WARN "  git stash pop    # Restores your changes"
+            WARN ""
+            WARN "For detailed workflow guidance, see: docs-tech/sync-workflow.md"
         fi
 
         popd >/dev/null
@@ -315,7 +317,7 @@ function sync_repository() {
             WARN "Possible reasons:"
             WARN "  - No push permissions"
             WARN "  - Remote has protected branch rules"
-            WARN "  - Network issues"
+            WARN "  - Network issues (check NAS connection)"
             WARN "  - Remote has newer changes (try pulling first)"
             WARN ""
             WARN "To troubleshoot:"
@@ -329,6 +331,8 @@ function sync_repository() {
             WARN "After resolving, return to superrepo and re-run:"
             WARN "  cd $(git rev-parse --show-toplevel)"
             WARN "  ./sync_submodules"
+            WARN ""
+            WARN "For NAS/SSH setup help, see: docs-tech/ssh-setup.md"
             popd >/dev/null
             return 1
         fi
@@ -509,6 +513,7 @@ function main() {
     if ! git rev-parse --git-dir >/dev/null 2>&1; then
         ERROR "Not in a git repository!"
         ERROR "Please run this script from your superrepo root"
+        ERROR "For repository setup help, see: docs-tech/clone-guide.md"
         exit 1
     fi
     
@@ -548,6 +553,8 @@ function main() {
     INFO "=== Synchronization complete! ==="
     INFO "All repositories are now in sync with their remotes"
     INFO "Your teammates will receive your changes on their next sync"
+    echo
+    INFO "For workflow tips and automation setup, see: docs-tech/"
 }
 
 # Run main function
